@@ -1,0 +1,8 @@
+{
+  "name": "Campaigner Pro",
+  "description": "A modern web application for creating, managing, and analyzing email campaigns with real-time analytics, contact importing, and seamless automation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "campaigner-pro",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs"
+  },
+  "dependencies": {
+    "@google/genai": "^1.21.0",
+    "@supabase/storage-js": "^2.12.2",
+    "@supabase/supabase-js": "^2.58.0",
+    "@types/express": "^5.0.6",
+    "esbuild": "^0.28.2",
+    "express": "^5.2.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "recharts": "^3.2.1",
+    "tsx": "^4.23.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
