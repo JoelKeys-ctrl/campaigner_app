@@ -33,12 +33,13 @@ const CogIcon: React.FC<{className: string}> = ({className}) => (
 );
 
 
-export const DEFAULT_N8N_WEBHOOK_URL = 'https://nexflow-hub.app.n8n.cloud/webhook-test/df186a08-5a79-4a87-91e8-5a7c4f0d551c';
+export const DEFAULT_N8N_WEBHOOK_URL = 'https://n8n-4geh.srv1937706.hstgr.cloud/webhook-test/df186a08-5a79-4a87-91e8-5a7c4f0d551c';
 
 export const NAV_ITEMS: { id: Page; label: string; icon: React.ReactNode }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <ChartIcon className="h-6 w-6" /> },
   { id: 'contacts', label: 'Contacts', icon: <UsersIcon className="h-6 w-6" /> },
   { id: 'campaigns-list', label: 'Campaigns', icon: <DocumentTextIcon className="h-6 w-6" /> },
   { id: 'templates', label: 'Templates', icon: <CollectionIcon className="h-6 w-6" /> },
-  { id: 'settings', label: 'Settings', icon: <CogIcon className="h-6 w-6" /> },
+  // Settings section temporarily hidden per user request:
+  // { id: 'settings', label: 'Settings', icon: <CogIcon className="h-6 w-6" /> },
 ];

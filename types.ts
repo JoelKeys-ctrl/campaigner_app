@@ -38,6 +38,16 @@ export type ContactList = {
 
 export type CampaignStatus = 'draft' | 'scheduled' | 'sent';
 
+export type EmailAttachmentType = 'image' | 'document';
+
+export interface EmailAttachment {
+  type: EmailAttachmentType;
+  filename: string;
+  mimeType: string;
+  size: number;
+  data: string; // BASE64_DATA_WITHOUT_DATA_URL_PREFIX
+}
+
 export type Campaign = {
   id: number;
   user_id: string;
@@ -52,7 +62,10 @@ export type Campaign = {
     name: string;
     content: string; // base64
     type: string;
+    size?: number;
   };
+  attachments?: EmailAttachment[];
+  hasAttachment?: boolean;
 };
 
 export type EmailTemplate = {

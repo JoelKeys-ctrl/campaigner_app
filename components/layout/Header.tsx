@@ -1,5 +1,6 @@
 import React from 'react';
 import ThemeToggle from './ThemeToggle';
+import { CampaignerLogo } from '../ui/CampaignerLogo';
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -22,13 +23,18 @@ const SearchIcon: React.FC<{className?: string}> = ({className}) => (
 const Header: React.FC<HeaderProps> = ({ onToggleSidebar, onOpenSearch }) => {
   return (
     <header className="flex-shrink-0 flex items-center justify-between h-20 px-4 md:px-8 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-        <button 
-            onClick={onToggleSidebar} 
-            className="p-2 text-gray-500 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500 lg:hidden"
-            aria-label="Open sidebar"
-        >
-            <MenuIcon className="h-6 w-6" />
-        </button>
+        <div className="flex items-center gap-3">
+          <button 
+              onClick={onToggleSidebar} 
+              className="p-2 text-gray-500 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500 lg:hidden"
+              aria-label="Open sidebar"
+          >
+              <MenuIcon className="h-6 w-6" />
+          </button>
+          <div className="lg:hidden flex items-center">
+            <CampaignerLogo size={30} idPrefix="header-logo" />
+          </div>
+        </div>
         {/* Spacer to push content to the right when sidebar is hidden on lg screens */}
         <div className="hidden lg:flex"></div>
         <div className="flex items-center gap-4">

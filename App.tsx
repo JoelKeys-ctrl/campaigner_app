@@ -19,6 +19,7 @@ import { DEFAULT_N8N_WEBHOOK_URL } from './constants';
 import { useDebounce } from './hooks/useDebounce';
 import { useCampaignScheduler } from './hooks/useCampaignScheduler';
 import { sendCampaign as triggerN8nCampaign } from './services/n8nService';
+import { normalizeCampaignAttachments } from './services/attachmentUtils';
 
 type NotificationType = 'success' | 'error';
 interface NotificationState {
@@ -53,17 +54,21 @@ const App: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const debouncedSearchQuery = useDebounce(searchQuery, 300);
     const [searchResults, setSearchResults] = useState<SearchResults>({ campaigns: [], templates: [], contacts: [] });
+    const justSignedInRef = React.useRef(false);
     
     // Auth Listener
     useEffect(() => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             setSession(session);
             setAuthEvent(event);
-            if (event === 'PASSWORD_RECOVERY') {
+            if (event === 'SIGNED_IN') {
+                justSignedInRef.current = true;
+            } else if (event === 'PASSWORD_RECOVERY') {
                 // User needs to set a new password
             } else if (event === 'SIGNED_OUT') {
                 setUser(null);
                 setIsLoading(false);
+                justSignedInRef.current = false;
             }
         });
 
@@ -87,7 +92,7 @@ const App: React.FC = () => {
                 supabase.from('campaigns').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
                 supabase.from('templates').select('*').eq('user_id', user.id),
                 supabase.from('app_activity').select('*').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(10),
-                supabase.from('profiles').select('n8n_webhook_url, send_method').eq('id', user.id).single(),
+                supabase.from('profiles').select('n8n_webhook_url, send_method').eq('id', user.id).maybeSingle(),
             ]);
 
             if (listsRes.error) throw listsRes.error;
@@ -95,10 +100,15 @@ const App: React.FC = () => {
             setContactLists(formattedLists);
 
             if (campaignsRes.error) throw campaignsRes.error;
-            const formattedCampaigns = campaignsRes.data.map((campaign: Campaign) => ({
-                ...campaign,
-                recipient_ids: campaign.recipient_ids || []
-            }));
+            const formattedCampaigns = campaignsRes.data.map((campaign: any) => {
+                const normalizedAttachments = normalizeCampaignAttachments(campaign);
+                return {
+                    ...campaign,
+                    recipient_ids: campaign.recipient_ids || [],
+                    attachments: normalizedAttachments,
+                    hasAttachment: normalizedAttachments.length > 0,
+                };
+            });
             setCampaigns(formattedCampaigns);
 
             if (templatesRes.error) throw templatesRes.error;
@@ -108,7 +118,6 @@ const App: React.FC = () => {
             const formattedActivity = activityRes.data.map((act: any) => ({...act, timestamp: new Date(act.timestamp)}));
             setAppActivity(formattedActivity);
             
-            if (profileRes.error) throw profileRes.error;
             if (profileRes.data) {
                 setN8nWebhookUrl(profileRes.data.n8n_webhook_url || DEFAULT_N8N_WEBHOOK_URL);
                 setSendMethod(profileRes.data.send_method || 'n8n');
@@ -127,28 +136,50 @@ const App: React.FC = () => {
     }, [showNotification]);
 
     const fetchUser = useCallback(async (session: Session) => {
-        const { data: profile, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
+        try {
+            const { data: profile, error } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', session.user.id)
+                .maybeSingle();
 
-        if (error) {
-            console.error("Error fetching user profile:", error);
-            // We might want to sign out if the profile doesn't exist
-            await supabase.auth.signOut();
-            return;
-        }
+            if (error) {
+                console.warn("Could not fetch user profile details from database:", error);
+            }
 
-        if (profile) {
             const fetchedUser: User = {
                 id: session.user.id,
-                name: profile.full_name || session.user.email,
-                email: session.user.email!,
-                avatarUrl: profile.avatar_url,
+                name: profile?.full_name || session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+                email: session.user.email || 'user@example.com',
+                avatarUrl: profile?.avatar_url || session.user.user_metadata?.avatar_url,
             };
             setUser(fetchedUser);
+
+            if (justSignedInRef.current) {
+                showNotification(`Welcome back, ${fetchedUser.name}!`, 'success');
+                justSignedInRef.current = false;
+            }
+
+            // If profile does not exist yet, seed it in background
+            if (!profile && !error) {
+                supabase.from('profiles').upsert({
+                    id: session.user.id,
+                    full_name: fetchedUser.name,
+                    email: fetchedUser.email,
+                }).then(() => {}, () => {});
+            }
+
             await fetchAllData(fetchedUser);
+        } catch (err: any) {
+            console.error("Error fetching user profile:", err);
+            // Graceful resilience: do NOT sign the user out on network glitches
+            const fallbackUser: User = {
+                id: session.user.id,
+                name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'User',
+                email: session.user.email || 'user@example.com',
+            };
+            setUser(fallbackUser);
+            setIsLoading(false);
         }
     }, [fetchAllData]);
 
@@ -219,7 +250,13 @@ const App: React.FC = () => {
             showNotification(`Error updating status for sent campaign: ${error.message}`, 'error');
             console.error(error);
         } else if (data) {
-            const updatedCampaign = { ...data, recipient_ids: data.recipient_ids || [] };
+            const normalizedAttachments = normalizeCampaignAttachments(data);
+            const updatedCampaign: Campaign = {
+                ...data,
+                recipient_ids: data.recipient_ids || [],
+                attachments: normalizedAttachments,
+                hasAttachment: normalizedAttachments.length > 0,
+            };
             setCampaigns(prev => prev.map(c => c.id === updatedCampaign.id ? updatedCampaign : c));
             recordActivity('campaign-sent', `Sent scheduled campaign: "${updatedCampaign.name}"`, { campaignId: updatedCampaign.id });
             showNotification(`Campaign "${updatedCampaign.name}" has been successfully sent!`);
@@ -253,7 +290,9 @@ const App: React.FC = () => {
                 recipient_ids: campaignData.recipient_ids,
                 status: 'sent',
                 created_at: editingCampaign?.created_at || new Date().toISOString(),
-                attachment: campaignData.attachment
+                attachment: campaignData.attachment,
+                attachments: campaignData.attachments || [],
+                hasAttachment: Boolean(campaignData.attachments && campaignData.attachments.length > 0)
             };
 
             const result = await triggerN8nCampaign(campaignForN8n, recipients, n8nWebhookUrl, sendMethod);
@@ -264,23 +303,55 @@ const App: React.FC = () => {
             }
         }
 
-        const campaignToUpsert = {
-            ...campaignData,
+        let attachmentPayload: any = null;
+        if (campaignData.attachments && campaignData.attachments.length > 0) {
+            attachmentPayload = {
+                name: campaignData.attachments[0].filename,
+                type: campaignData.attachments[0].mimeType,
+                content: campaignData.attachments[0].data,
+                size: campaignData.attachments[0].size,
+                attachments: campaignData.attachments, // multi-attachments preserved in JSON column
+            };
+        } else if (campaignData.attachment) {
+            attachmentPayload = campaignData.attachment;
+        }
+
+        // Only pass valid columns to Supabase PostgreSQL (schema does NOT have hasAttachment or attachments columns)
+        const dbUpsert: Record<string, any> = {
             user_id: user.id,
+            name: campaignData.name || '',
+            subject: campaignData.subject || '',
+            body: campaignData.body || '',
+            recipient_ids: campaignData.recipient_ids || [],
+            status: campaignData.status || 'draft',
+            attachment: attachmentPayload,
         };
+
+        if (campaignData.id) {
+            dbUpsert.id = campaignData.id;
+        }
+        if (campaignData.scheduled_at !== undefined) {
+            dbUpsert.scheduled_at = campaignData.scheduled_at;
+        }
 
         const { data, error } = await supabase
             .from('campaigns')
-            .upsert(campaignToUpsert)
+            .upsert(dbUpsert)
             .select()
             .single();
         
         if (error) {
             showNotification(`Error saving campaign: ${error.message}`, 'error');
-            console.error(error);
+            console.error("Error saving campaign:", error);
             return false;
         } else if (data) {
-            const savedCampaign = { ...data, recipient_ids: data.recipient_ids || [] };
+            const normalizedAttachments = normalizeCampaignAttachments(data);
+            const savedCampaign: Campaign = {
+                ...data,
+                recipient_ids: data.recipient_ids || [],
+                attachments: normalizedAttachments,
+                hasAttachment: normalizedAttachments.length > 0,
+            };
             setCampaigns(prev => {
                 const existing = prev.find(c => c.id === savedCampaign.id);
                 if (existing) {
@@ -427,7 +498,17 @@ const App: React.FC = () => {
     // Template Handlers
     const handleSaveTemplate = async (templateData: Omit<EmailTemplate, 'id' | 'created_at' | 'user_id'> & { id?: number }) => {
         if (!user) return;
-        const templateToUpsert = { ...templateData, user_id: user.id };
+        const isNew = !templateData.id || templateData.id === 0;
+        const templateToUpsert: any = {
+            name: templateData.name,
+            subject: templateData.subject,
+            body: templateData.body,
+            user_id: user.id
+        };
+        if (!isNew) {
+            templateToUpsert.id = templateData.id;
+        }
+
         const { data, error } = await supabase.from('templates').upsert(templateToUpsert).select().single();
         if (error) {
             showNotification(`Error saving template: ${error.message}`, 'error');
@@ -439,13 +520,12 @@ const App: React.FC = () => {
                 }
                 return [data, ...prev];
             });
-            if (!templateData.id) { // New template
+            if (isNew) {
                 recordActivity('template-created', `Created template: "${data.name}"`, { templateId: data.id });
             }
             showNotification(`Template "${data.name}" saved.`);
-            if (editingTemplate) { // If was in editor, close it
-                handleCloseEditor();
-            }
+            setCurrentPage('templates');
+            setEditingTemplate(null);
         }
     };
     
@@ -459,7 +539,7 @@ const App: React.FC = () => {
         }
     };
 
-    const handleEditTemplate = (template: EmailTemplate) => {
+    const handleEditTemplate = (template: EmailTemplate | null) => {
         setEditingTemplate(template);
         setCurrentPage('template-editor');
     };
@@ -566,13 +646,28 @@ const App: React.FC = () => {
     const renderPage = () => {
         switch (currentPage) {
             case 'dashboard':
-                return <DashboardPage campaigns={campaigns} contactLists={contactLists} appActivity={appActivity} />;
+                return (
+                    <DashboardPage 
+                        campaigns={campaigns} 
+                        contactLists={contactLists} 
+                        appActivity={appActivity} 
+                        onSaveCampaign={handleSaveCampaign}
+                        templates={templates}
+                        user={user || undefined}
+                        onViewReport={handleViewReport}
+                        onEditCampaign={handleEditCampaign}
+                        onCreateCampaignClick={handleCreateCampaign}
+                        onNavigateToCampaigns={() => setCurrentPage('campaigns-list')}
+                        onNavigateToContacts={() => setCurrentPage('contacts')}
+                        onNavigateToTemplates={() => setCurrentPage('templates')}
+                    />
+                );
             case 'contacts':
                 return <ContactsPage contactLists={contactLists} onImportList={handleImportList} onDeleteList={handleDeleteList} onRenameList={handleRenameList} user={user!} />;
             case 'campaigns-list':
                 return <CampaignsListPage campaigns={campaigns} onEditCampaign={handleEditCampaign} onDeleteCampaign={handleDeleteCampaign} onCreateCampaign={handleCreateCampaign} onViewReport={handleViewReport} highlightedCampaignId={highlightedCampaignId} onClearHighlight={() => setHighlightedCampaignId(null)} />;
             case 'campaign-editor':
-                return <CampaignsPage campaign={editingCampaign} onSave={handleSaveCampaign} onClose={handleCloseEditor} contactLists={contactLists} onSaveAsTemplate={handleSaveTemplate} />;
+                return <CampaignsPage campaign={editingCampaign} onSave={handleSaveCampaign} onClose={handleCloseEditor} contactLists={contactLists} templates={templates} onSaveAsTemplate={handleSaveTemplate} n8nWebhookUrl={n8nWebhookUrl} />;
             case 'templates':
                 return <TemplatesListPage templates={templates} onDeleteTemplate={handleDeleteTemplate} onNavigateToEditor={handleEditTemplate} onCreateCampaignFromTemplate={handleCreateCampaignFromTemplate} />;
             case 'template-editor':
@@ -586,7 +681,7 @@ const App: React.FC = () => {
                 }
                 return <CampaignReportPage campaign={reportingCampaign} allContacts={contactLists.flatMap(l => l.contacts)} onClose={handleCloseEditor} />;
             default:
-                return <DashboardPage campaigns={campaigns} contactLists={contactLists} appActivity={appActivity} />;
+                return <DashboardPage campaigns={campaigns} contactLists={contactLists} appActivity={appActivity} user={user || undefined} />;
         }
     };
 
@@ -611,7 +706,7 @@ const App: React.FC = () => {
     }
 
     return (
-        <ThemeProvider>
+        <>
             <Layout
                 currentPage={currentPage}
                 setCurrentPage={setCurrentPage}
@@ -630,11 +725,14 @@ const App: React.FC = () => {
                 onSelect={handleSelectSearchResult}
             />
             {notification && (
-              <div className={`fixed bottom-5 right-5 text-white py-2 px-4 rounded-lg shadow-lg animate-fade-in-up ${notification.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+              <div className={`fixed bottom-5 right-5 text-white py-2.5 px-4 rounded-xl shadow-xl z-50 flex items-center gap-2.5 text-sm font-medium animate-fade-in-up ${notification.type === 'success' ? 'bg-[#0b7b50] shadow-[#0b7b50]/25' : 'bg-red-600'}`}>
+                {notification.type === 'success' && (
+                  <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
+                )}
                 {notification.message}
               </div>
             )}
-        </ThemeProvider>
+        </>
     );
 };
 

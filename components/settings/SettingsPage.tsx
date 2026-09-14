@@ -188,6 +188,20 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ user, n8nWebhookUrl, sendMe
                     </button>
                   </div>
 
+                  {url.includes('/webhook-test/') && (
+                    <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs space-y-1">
+                      <p className="font-semibold flex items-center gap-1.5">
+                        <span>⚠️ You are using an n8n Test Webhook URL (<code className="px-1 py-0.5 rounded bg-amber-200/50 dark:bg-amber-950/50 text-[11px]">/webhook-test/</code>)</span>
+                      </p>
+                      <p>
+                        In n8n, <strong>Test Webhooks only respond while you have the workflow open in n8n and click &quot;Listen for test event&quot;</strong>. If n8n is not actively listening, it returns <code>404 / Connection Refused</code>.
+                      </p>
+                      <p>
+                        <strong>To send anytime without listening manually:</strong> Activate your workflow in n8n and replace <code className="font-mono">/webhook-test/</code> with <code className="font-mono font-semibold">/webhook/</code> in the URL above.
+                      </p>
+                    </div>
+                  )}
+
                   <div className="pt-2">
                     <Button 
                       type="button"

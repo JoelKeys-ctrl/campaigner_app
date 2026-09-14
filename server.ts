@@ -1,7 +1,15 @@
 import express from "express";
 import path from "path";
+import dns from "node:dns";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+
+// Prefer IPv4 over IPv6 in DNS lookup to prevent ConnectTimeoutError on hosts with unrouted IPv6
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch (e) {
+  console.warn("Could not set default DNS result order:", e);
+}
 
 function getGeminiClient(): GoogleGenAI {
   const apiKey = process.env.Campaigner_API_key || process.env.CAMPAIGNER_API_KEY || process.env.GEMINI_API_KEY;
@@ -19,7 +27,7 @@ function getGeminiClient(): GoogleGenAI {
 }
 
 // Fallback models in priority order to guarantee high availability during demand spikes
-const FALLBACK_MODELS = ['gemini-3.7-flash', 'gemini-3.1-pro-preview', 'gemini-3.1-flash-lite'];
+const FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-3.7-flash'];
 
 async function generateContentWithRetryAndFallback(
   ai: GoogleGenAI,
@@ -42,7 +50,7 @@ async function generateContentWithRetryAndFallback(
       } catch (err: any) {
         lastError = err;
         const errMessage = err?.message || JSON.stringify(err);
-        const isTransient = 
+        const isQuotaOrDemand = 
           err?.status === 503 || 
           err?.code === 503 ||
           errMessage.includes('503') || 
@@ -53,8 +61,13 @@ async function generateContentWithRetryAndFallback(
 
         console.warn(`[Gemini API] Request failed on ${model} (attempt ${attempt}):`, errMessage);
 
-        if (isTransient && attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, 700));
+        // If rate-limited or quota-exhausted on this specific model, don't wait 40 seconds; immediately switch to next fallback model
+        if (errMessage.includes('RESOURCE_EXHAUSTED') || errMessage.includes('429')) {
+          break; // Immediately move to next fallback model
+        }
+
+        if (isQuotaOrDemand && attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
         break; // Try next fallback model
@@ -69,7 +82,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
@@ -250,6 +264,90 @@ Return a JSON object with 'improvedText' and 'summaryOfChanges'.`;
     }
   });
 
+  // Proxy endpoint for n8n Webhook testing & sending (bypasses browser CORS & provides diagnostics)
+  app.post("/api/webhook/proxy", async (req, res) => {
+    try {
+      const { webhookUrl, payload } = req.body;
+      if (!webhookUrl) {
+        return res.status(400).json({ error: "Webhook URL is required." });
+      }
+
+      console.log(`[Webhook Proxy] Forwarding request to: ${webhookUrl}`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+      try {
+        const response = await fetch(webhookUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "Campaigner-Pro/1.0",
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        const responseText = await response.text();
+        let parsedData: any = null;
+        try {
+          parsedData = responseText ? JSON.parse(responseText) : null;
+        } catch {
+          parsedData = responseText;
+        }
+
+        if (!response.ok) {
+          let hint = "";
+          if (response.status === 404 && webhookUrl.includes("/webhook-test/")) {
+            hint = " (Note: In n8n, '/webhook-test/' URLs only respond when you click 'Listen for test event' in the n8n UI, or activate the workflow and use the Production URL '/webhook/...')";
+          }
+          return res.status(response.status).json({
+            success: false,
+            status: response.status,
+            statusText: response.statusText,
+            error: `Webhook returned HTTP ${response.status} (${response.statusText})${hint}`,
+            responseBody: parsedData,
+          });
+        }
+
+        return res.json({
+          success: true,
+          status: response.status,
+          statusText: response.statusText,
+          data: parsedData || "Payload received successfully",
+        });
+      } catch (fetchErr: any) {
+        clearTimeout(timeoutId);
+        const errStr = fetchErr?.message || String(fetchErr);
+        const isTimeout = fetchErr?.name === "AbortError" || errStr.toLowerCase().includes("timeout") || errStr.toLowerCase().includes("und_err_connect_timeout");
+        
+        let errorMsg = isTimeout
+          ? "Connection timeout to webhook host. Ensure the n8n server is running and accessible."
+          : `Network error reaching webhook: ${errStr}`;
+
+        if (webhookUrl.includes("/webhook-test/")) {
+          errorMsg += " (If using an n8n Test URL, click 'Listen for test event' in n8n first, or use the Production /webhook/ URL).";
+        }
+
+        return res.status(isTimeout ? 504 : 502).json({
+          success: false,
+          isNetworkError: true,
+          error: errorMsg,
+          details: errStr,
+        });
+      }
+    } catch (err: any) {
+      console.error("[Webhook Proxy] Request processing error:", err);
+      return res.status(500).json({
+        success: false,
+        isNetworkError: true,
+        error: `Webhook processing error: ${err.message || String(err)}`,
+      });
+    }
+  });
+
   // Vite middleware for dev / static serving in production
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -260,7 +358,7 @@ Return a JSON object with 'improvedText' and 'summaryOfChanges'.`;
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
+    app.get("*all", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
