@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { CampaignerLogoIcon } from '../ui/CampaignerLogo';
 
@@ -16,6 +17,7 @@ const AuthPage: React.FC<AuthPageProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [nameOrEmail, setNameOrEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const clearNotifications = () => {
@@ -69,10 +71,10 @@ const AuthPage: React.FC<AuthPageProps> = ({
         <picture>
           <source 
             media="(min-width: 640px)" 
-            srcSet="/src/assets/images/login_tech_bg_wide_1789035566121.jpg" 
+            srcSet="/images/login_tech_bg_wide.jpg" 
           />
           <img 
-            src="/src/assets/images/login_digital_tablet_bg_1789035545057.jpg" 
+            src="/images/login_digital_tablet_bg.jpg" 
             alt="Digital analytics tablet background"
             className="w-full h-full object-cover object-center sm:object-right md:object-center brightness-90 contrast-105"
             referrerPolicy="no-referrer"
@@ -94,7 +96,7 @@ const AuthPage: React.FC<AuthPageProps> = ({
             style={{ clipPath: 'polygon(0 0, 100% 0, 100% 74%, 0 100%)' }}
           >
             <img 
-              src="/src/assets/images/monochrome_skyscrapers_1789034967776.jpg" 
+              src="/images/monochrome_skyscrapers.jpg" 
               alt="City Skyscraper Architecture"
               className="w-full h-full object-cover grayscale contrast-125 brightness-95"
               referrerPolicy="no-referrer"
@@ -169,20 +171,36 @@ const AuthPage: React.FC<AuthPageProps> = ({
               >
                 PASSWORD
               </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  clearNotifications();
-                }}
-                placeholder="******"
-                className="w-full bg-[#11161f] text-white placeholder-gray-500 rounded-2xl px-4 sm:px-5 py-3 text-xs sm:text-sm font-normal focus:outline-none focus:ring-2 focus:ring-[#0b7b50] border border-gray-800 transition-all shadow-inner tracking-wider"
-              />
+              <div className="relative">
+                <input
+                  id="password"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    clearNotifications();
+                  }}
+                  placeholder="******"
+                  className="w-full bg-[#11161f] text-white placeholder-gray-500 rounded-2xl pl-4 sm:pl-5 pr-12 py-3 text-xs sm:text-sm font-normal focus:outline-none focus:ring-2 focus:ring-[#0b7b50] border border-gray-800 transition-all shadow-inner tracking-wider"
+                />
+                <button
+                  type="button"
+                  id="toggle-password-visibility"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-white transition-colors focus:outline-none focus:text-emerald-400 cursor-pointer"
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* Log in Button */}
